@@ -1,0 +1,63 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      retroarch_version:
+        description: RetroArch version to build
+        default: "1.22.2"
+
+# This workflow cannot run green yet, and that is deliberate rather than
+# overlooked. It needs the Nerves system's staging sysroot, and
+# nerves_system_rg40xxv publishes no release artifacts today -- its release
+# page 404s, which is why local app builds fall back to compiling the system.
+#
+# It is committed anyway so the missing piece is visible and named. The fix is
+# for the system repo to attach its artifact to a release; the CI there
+# already builds one. Until then, run build.sh locally with SYSROOT pointing
+# at ~/.nerves/artifacts/nerves_system_rg40xxv-portable-*/staging.
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git curl pkg-config
+
+      # The toolchain must be the Linux build of the Nerves aarch64 toolchain,
+      # not the darwin one a laptop uses. Same compiler and same libc as the
+      # system was built with; a distribution cross-gcc is a different glibc
+      # and the mismatch surfaces at runtime on the device.
+      - name: Fetch the Nerves toolchain
+        run: |
+          echo "TODO: download nerves_toolchain_aarch64_nerves_linux_gnu"
+          echo "      for linux_x86_64 and unpack to \$RUNNER_TEMP/toolchain"
+          exit 1
+
+      - name: Fetch the system sysroot
+        run: |
+          echo "TODO: download the nerves_system_rg40xxv artifact and unpack"
+          echo "      its staging/ directory. Blocked: no published release."
+          exit 1
+
+      - name: Build the bundle
+        env:
+          RETROARCH_VERSION: ${{ inputs.retroarch_version || '1.22.2' }}
+        run: |
+          SYSROOT="$RUNNER_TEMP/sysroot" \
+          CROSS="$RUNNER_TEMP/toolchain/bin/aarch64-nerves-linux-gnu-" \
+            ./build.sh
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/*.tar.gz
+            out/*.tar.gz.sha256

@@ -1,0 +1,10 @@
+# One core per line: <name> <git url>
+#
+# <name> must match the core's output, so that <name>_libretro.so is what its
+# Makefile.libretro produces and what build.sh strips into lib/libretro/.
+#
+# Deliberately starting with one small, permissively licensed, fast-building
+# core. The point of the first build is to prove the toolchain, the sysroot
+# and the bundle format -- not to ship a library. Add real cores once a
+# bundle has been installed and launched on hardware.
+2048 https://github.com/libretro/libretro-2048.git
