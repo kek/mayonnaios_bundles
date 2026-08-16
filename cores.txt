@@ -3,8 +3,19 @@
 # <name> must match the core's output, so that <name>_libretro.so is what its
 # Makefile.libretro produces and what build.sh strips into lib/libretro/.
 #
-# Deliberately starting with one small, permissively licensed, fast-building
-# core. The point of the first build is to prove the toolchain, the sysroot
-# and the bundle format -- not to ship a library. Add real cores once a
-# bundle has been installed and launched on hardware.
+# Deliberately started with one small, permissively licensed, fast-building
+# core. The point of the first build was to prove the toolchain, the sysroot
+# and the bundle format -- not to ship a library.
 2048 https://github.com/libretro/libretro-2048.git
+
+# The first real emulator. Cross-built and run on hardware before being added
+# here: the core loads, reports itself as "Snes9x 2010", negotiates RGB565 and
+# runs a ROM.
+#
+# Its Makefile.libretro leaves CC unset under platform=unix (the `CC = gcc`
+# line is commented out), so make's built-in default applies -- and an
+# exported CC overrides a built-in, which is why the environment build.sh sets
+# is enough. Nothing in the file needed patching. Worth re-checking when adding
+# any other core: several platform branches in that same Makefile *do* assign
+# CC outright, and one of those would silently ignore the cross compiler.
+snes9x2010 https://github.com/libretro/snes9x2010.git
