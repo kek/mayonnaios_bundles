@@ -120,8 +120,20 @@ cd "$src"
 # is set, and nothing sets CROSS_COMPILE except --host.
 #
 # The disable list is long because this device has no X11, no Wayland, no
-# D-Bus, no systemd and no udev, and because every extra probe is another
-# chance for configure to find a host library and link it.
+# D-Bus and no systemd, and because every extra probe is another chance for
+# configure to find a host library and link it.
+#
+# udev is the exception, and it is not optional. Built with --disable-udev
+# this binary rendered a frame on the Mali-G31 and exited:
+#
+#     [Video] Graphics driver did not initialize an input driver.
+#     [ERROR] [Video] Cannot initialize input driver. Exiting...
+#
+# On Linux, udev is RetroArch's evdev path. The alternatives are linuxraw,
+# which reads console keycodes and cannot see gamepad BTN_* events, and sdl,
+# which needs SDL. There is no plain evdev driver, and the target kernel has
+# no joydev so /dev/input/js* does not exist. The system ships eudev from
+# v0.2.0 for this reason alone.
 ./configure \
     --prefix=/ \
     --host=aarch64-linux-gnu \
@@ -153,7 +165,7 @@ cd "$src"
     --disable-oss \
     --disable-pulse \
     --disable-pipewire \
-    --disable-udev \
+    --enable-udev \
     --disable-dbus \
     --disable-systemd \
     --disable-libusb \
