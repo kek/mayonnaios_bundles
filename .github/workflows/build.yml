@@ -2,22 +2,30 @@ name: build
 
 on:
   push:
-    tags: ["v*"]
+  pull_request:
   workflow_dispatch:
     inputs:
       retroarch_version:
         description: RetroArch version to build
         default: "1.22.2"
 
-# This workflow cannot run green yet, and that is deliberate rather than
-# overlooked. It needs the Nerves system's staging sysroot, and
-# nerves_system_rg40xxv publishes no release artifacts today -- its release
-# page 404s, which is why local app builds fall back to compiling the system.
-#
-# It is committed anyway so the missing piece is visible and named. The fix is
-# for the system repo to attach its artifact to a release; the CI there
-# already builds one. Until then, run build.sh locally with SYSROOT pointing
-# at ~/.nerves/artifacts/nerves_system_rg40xxv-portable-*/staging.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RETROARCH_VERSION: "1.22.2"
+  # The system whose sysroot this links against. RetroArch must be built with
+  # the exact libgbm, libEGL, libGLESv2, libdrm, libasound and libudev the
+  # device runs, or the sonames disagree and it fails at runtime -- on the
+  # device, which is the slowest place to find out.
+  SYSTEM_REPO: kek/nerves_system_rg40xxv
+  SYSTEM_TAG: v0.2.0
+  SYSTEM_ARTIFACT: nerves_system_rg40xxv-portable-0.1.0-A58E483.tar.gz
+  # Must be the Linux build of the Nerves toolchain, not a distribution's
+  # cross-gcc: same compiler and same libc the system was built with.
+  TOOLCHAIN_VERSION: "15.3.0"
+  TOOLCHAIN_ASSET: nerves_toolchain_aarch64_nerves_linux_gnu-linux_x86_64-15.3.0-8DAF9F3.tar.xz
 
 jobs:
   bundle:
@@ -28,31 +36,89 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git curl pkg-config
+          sudo apt-get install -y build-essential git curl pkg-config xz-utils
 
-      # The toolchain must be the Linux build of the Nerves aarch64 toolchain,
-      # not the darwin one a laptop uses. Same compiler and same libc as the
-      # system was built with; a distribution cross-gcc is a different glibc
-      # and the mismatch surfaces at runtime on the device.
+      - name: Cache the toolchain and sysroot
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/toolchain
+            ~/sysroot
+          key: ${{ env.TOOLCHAIN_ASSET }}-${{ env.SYSTEM_ARTIFACT }}
+
       - name: Fetch the Nerves toolchain
+        if: steps.cache-deps.outputs.cache-hit != 'true'
         run: |
-          echo "TODO: download nerves_toolchain_aarch64_nerves_linux_gnu"
-          echo "      for linux_x86_64 and unpack to \$RUNNER_TEMP/toolchain"
-          exit 1
+          mkdir -p ~/toolchain
+          curl -fsSL -o /tmp/toolchain.tar.xz \
+            "https://github.com/nerves-project/toolchains/releases/download/v${TOOLCHAIN_VERSION}/${TOOLCHAIN_ASSET}"
+          tar -xJf /tmp/toolchain.tar.xz -C ~/toolchain --strip-components=1
 
       - name: Fetch the system sysroot
+        if: steps.cache-deps.outputs.cache-hit != 'true'
         run: |
-          echo "TODO: download the nerves_system_rg40xxv artifact and unpack"
-          echo "      its staging/ directory. Blocked: no published release."
-          exit 1
+          # The artifact is ~550 MB and only staging/ is needed, but the
+          # tarball is not seekable, so it comes down whole and is thrown away.
+          mkdir -p ~/sysroot /tmp/system
+          curl -fsSL -o /tmp/system.tar.gz \
+            "https://github.com/${SYSTEM_REPO}/releases/download/${SYSTEM_TAG}/${SYSTEM_ARTIFACT}"
+          tar -xzf /tmp/system.tar.gz -C /tmp/system
+          mv /tmp/system/*/staging/* ~/sysroot/
+          rm -rf /tmp/system /tmp/system.tar.gz
+
+      - name: Check the sysroot has what RetroArch links
+        # Fail here rather than 40 minutes later at the link, and name the
+        # missing library instead of leaving a configure probe to say
+        # something misleading about a host path.
+        run: |
+          rc=0
+          for pc in gbm egl glesv2 libdrm alsa libudev freetype2; do
+            if [ -f ~/sysroot/usr/lib/pkgconfig/$pc.pc ] || \
+               [ -f ~/sysroot/usr/share/pkgconfig/$pc.pc ]; then
+              echo "ok       $pc"
+            else
+              echo "MISSING  $pc"
+              rc=1
+            fi
+          done
+          exit $rc
 
       - name: Build the bundle
         env:
           RETROARCH_VERSION: ${{ inputs.retroarch_version || '1.22.2' }}
         run: |
-          SYSROOT="$RUNNER_TEMP/sysroot" \
-          CROSS="$RUNNER_TEMP/toolchain/bin/aarch64-nerves-linux-gnu-" \
+          SYSROOT="$HOME/sysroot" \
+          CROSS="$HOME/toolchain/bin/aarch64-nerves-linux-gnu-" \
             ./build.sh
+
+      - name: Check the bundle is what it claims to be
+        # A tarball that unpacks is not evidence. These are the three things
+        # that have actually gone wrong: a binary built for the wrong
+        # architecture, a missing udev link that leaves the gamepad dead, and a
+        # missing autoconfig that leaves it unmapped.
+        run: |
+          rm -rf /tmp/verify && mkdir -p /tmp/verify
+          tar -xzf out/retroarch-*-aarch64.tar.gz -C /tmp/verify
+
+          file /tmp/verify/bin/retroarch | tee /tmp/file.txt
+          grep -q "ARM aarch64" /tmp/file.txt
+
+          readelf -d /tmp/verify/bin/retroarch | grep NEEDED
+          readelf -d /tmp/verify/bin/retroarch | grep -q "libudev"
+          readelf -d /tmp/verify/bin/retroarch | grep -q "libGLESv2"
+
+          test -f /tmp/verify/share/retroarch/autoconfig/gpio-keys-gamepad.cfg
+          test -f /tmp/verify/share/retroarch/retroarch.cfg
+          ls /tmp/verify/lib/libretro/*.so
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: retroarch-bundle
+          path: |
+            out/*.tar.gz
+            out/*.tar.gz.sha256
+          if-no-files-found: error
 
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/v')
