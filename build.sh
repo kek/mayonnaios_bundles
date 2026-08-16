@@ -20,13 +20,19 @@
 #
 set -euo pipefail
 
+# Resolved before anything cd's anywhere. $0 is relative when the script is
+# invoked as ./build.sh, and the core loop runs after a cd into the RetroArch
+# source tree, so a late $(dirname "$0") looks for cores.txt in the wrong
+# directory and reports it as missing.
+here="$(cd "$(dirname "$0")" && pwd)"
+
 RETROARCH_VERSION="${RETROARCH_VERSION:-1.22.2}"
 SYSROOT="${SYSROOT:?set SYSROOT to the Nerves system staging sysroot}"
 CROSS="${CROSS:?set CROSS to the toolchain prefix, e.g. aarch64-nerves-linux-gnu-}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
-work="${WORK:-$PWD/work}"
-out="${OUT:-$PWD/out}"
+work="${WORK:-$here/work}"
+out="${OUT:-$here/out}"
 stage="$work/stage"
 
 mkdir -p "$work" "$out"
@@ -44,9 +50,56 @@ export AR="${CROSS}ar"
 export STRIP="${CROSS}strip"
 export PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
 export PKG_CONFIG_LIBDIR="$SYSROOT/usr/lib/pkgconfig:$SYSROOT/usr/share/pkgconfig"
-export CFLAGS="--sysroot=$SYSROOT ${CFLAGS:-} -O2"
-export CXXFLAGS="--sysroot=$SYSROOT ${CXXFLAGS:-} -O2"
-export LDFLAGS="--sysroot=$SYSROOT ${LDFLAGS:-}"
+
+# Tell qb which pkg-config to use, or it will not find one at all.
+#
+# qb/qb.comp.sh:129 looks only for ${CROSS_COMPILE}pkgconf and
+# ${CROSS_COMPILE}pkg-config -- the Buildroot-style prefixed wrapper. We do not
+# have one, and --host sets CROSS_COMPILE, so an unprefixed pkg-config sitting
+# in PATH is invisible to it:
+#
+#     Checking for pkg-config ... none
+#     Warning: pkg-config not found, package checks will fail.
+#
+# Every "package X" check then answers no while the raw link tests answer yes,
+# so configure falls back to searching host paths like /usr/include/alsa and
+# dies with "Forced to build with library -lasound, but cannot locate" -- a
+# message that points at the sysroot when the fault is the probe. The variable
+# is honoured from the environment, so this is the whole fix.
+export PKG_CONF_PATH="${PKG_CONF_PATH:-pkg-config}"
+
+# Tell qb the TARGET operating system, because it otherwise uses the build
+# machine's.
+#
+# qb/qb.system.sh:4-22 only derives OS from CROSS_COMPILE for mingw and djgpp;
+# every other cross prefix falls through to `uname -s`. Building on macOS then
+# gives OS=Darwin for an aarch64 Linux target, and Makefile.common:136 adds
+#
+#     MINVERFLAGS = -mmacosx-version-min=10.15 -stdlib=libc++
+#
+# to every compile, which the Nerves gcc rejects outright:
+#
+#     error: unrecognized command-line option '-mmacosx-version-min=10.15'
+#
+# OS is read from the environment and both guards check it, so setting it here
+# stops the fallback. Harmless on a Linux builder, where it is already Linux.
+export OS="${OS:-Linux}"
+# Set, not appended to. The ambient values belong to the build machine and
+# have no business in a cross compile: this laptop's shell exports
+#
+#     LDFLAGS=-L/opt/homebrew/opt/postgresql@16/lib
+#     CPPFLAGS=-I/opt/homebrew/opt/postgresql@16/include
+#
+# from a Homebrew postgres setup, and an earlier version of this script
+# inherited them -- the first successful build linked its core with a host
+# library path on the command line. Nothing resolved from there so nothing
+# broke, which is the bad kind of harmless: a host -I or -L that does match
+# something produces an aarch64 binary with x86 headers' assumptions baked in,
+# and the failure surfaces on the device.
+export CFLAGS="--sysroot=$SYSROOT -O2"
+export CXXFLAGS="--sysroot=$SYSROOT -O2"
+export LDFLAGS="--sysroot=$SYSROOT"
+export CPPFLAGS="--sysroot=$SYSROOT"
 
 say() { printf '\n=== %s\n' "$*"; }
 
@@ -139,15 +192,35 @@ while read -r name repo; do
     [ -d "$coredir" ] || git clone --depth 1 "$repo" "$coredir"
     make -C "$coredir" -f Makefile.libretro -j"$JOBS" platform=unix
     "$STRIP" -o "$stage/lib/libretro/${name}_libretro.so" "$coredir/${name}_libretro.so"
-done < "${CORES:-$(dirname "$0")/cores.txt}"
+done < "${CORES:-$here/cores.txt}"
 
 say "packaging"
 tarball="$out/retroarch-${RETROARCH_VERSION}-aarch64.tar.gz"
-# Deterministic-ish: sorted, fixed owner. Not bit-reproducible (gzip stores a
-# timestamp), but the checksum is stable for identical inputs within a run,
-# and the .sha256 is what the device trusts.
-tar --sort=name --owner=0 --group=0 --numeric-owner -czf "$tarball" -C "$stage" .
-( cd "$out" && sha256sum "$(basename "$tarball")" > "$(basename "$tarball").sha256" )
+
+# GNU tar if there is one, because --sort and --numeric-owner make the archive
+# reproducible-ish; BSD tar on macOS has neither and fails on the flags rather
+# than ignoring them. The bundle is identical either way -- ordering and owner
+# ids only affect whether two builds produce the same bytes, not what the
+# device unpacks -- so a macOS builder is allowed, just less deterministic.
+if command -v gtar >/dev/null 2>&1; then
+    gtar --sort=name --owner=0 --group=0 --numeric-owner -czf "$tarball" -C "$stage" .
+elif tar --version 2>/dev/null | grep -q GNU; then
+    tar --sort=name --owner=0 --group=0 --numeric-owner -czf "$tarball" -C "$stage" .
+else
+    tar -czf "$tarball" -C "$stage" .
+fi
+
+# sha256sum is GNU coreutils; macOS ships shasum. Same digest either way, and
+# the format matches so the .sha256 file is interchangeable.
+(
+    cd "$out"
+    base="$(basename "$tarball")"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$base" > "$base.sha256"
+    else
+        shasum -a 256 "$base" > "$base.sha256"
+    fi
+)
 
 say "done"
 ls -la "$out"
