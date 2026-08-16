@@ -112,6 +112,37 @@ jobs:
           test -f /tmp/verify/share/retroarch/retroarch.cfg
           ls /tmp/verify/lib/libretro/*.so
 
+          # Cores must not be read from inside the bundle. If libretro_directory
+          # ever points back at a bundle path, every separately installed core
+          # is silently lost at the next RetroArch upgrade -- which is a bug
+          # that only shows up one release later, on the device, as a core that
+          # used to be there.
+          grep -q '^libretro_directory = "/root/retroarch/cores"' \
+            /tmp/verify/share/retroarch/retroarch.cfg
+
+      - name: Check each core also ships on its own
+        # The per-core tarballs are what ScenicRg40xxv.Cores installs when
+        # someone picks a core from the upload page. Flat -- just the .so at
+        # the root -- because the installer symlinks whatever .so it finds.
+        run: |
+          rc=0
+          while read -r name repo; do
+            case "$name" in ''|\#*) continue ;; esac
+            tarball="out/${name}-"*"-aarch64.tar.gz"
+            if ! ls $tarball >/dev/null 2>&1; then
+              echo "MISSING  $name tarball"; rc=1; continue
+            fi
+            rm -rf /tmp/core && mkdir -p /tmp/core
+            tar -xzf $tarball -C /tmp/core
+            if [ -f "/tmp/core/${name}_libretro.so" ]; then
+              file "/tmp/core/${name}_libretro.so" | grep -q "ARM aarch64" \
+                && echo "ok       $name" || { echo "WRONG ARCH  $name"; rc=1; }
+            else
+              echo "MISSING  ${name}_libretro.so at the archive root"; rc=1
+            fi
+          done < cores.txt
+          exit $rc
+
       - uses: actions/upload-artifact@v4
         with:
           name: retroarch-bundle

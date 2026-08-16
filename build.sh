@@ -222,34 +222,59 @@ while read -r name repo; do
     "$STRIP" -o "$stage/lib/libretro/${name}_libretro.so" "$coredir/${name}_libretro.so"
 done < "${CORES:-$here/cores.txt}"
 
-say "packaging"
-tarball="$out/retroarch-${RETROARCH_VERSION}-aarch64.tar.gz"
-
 # GNU tar if there is one, because --sort and --numeric-owner make the archive
 # reproducible-ish; BSD tar on macOS has neither and fails on the flags rather
 # than ignoring them. The bundle is identical either way -- ordering and owner
 # ids only affect whether two builds produce the same bytes, not what the
 # device unpacks -- so a macOS builder is allowed, just less deterministic.
-if command -v gtar >/dev/null 2>&1; then
-    gtar --sort=name --owner=0 --group=0 --numeric-owner -czf "$tarball" -C "$stage" .
-elif tar --version 2>/dev/null | grep -q GNU; then
-    tar --sort=name --owner=0 --group=0 --numeric-owner -czf "$tarball" -C "$stage" .
-else
-    tar -czf "$tarball" -C "$stage" .
-fi
-
-# sha256sum is GNU coreutils; macOS ships shasum. Same digest either way, and
-# the format matches so the .sha256 file is interchangeable.
-(
-    cd "$out"
-    base="$(basename "$tarball")"
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$base" > "$base.sha256"
+pack() {
+    # pack <tarball> <dir>
+    if command -v gtar >/dev/null 2>&1; then
+        gtar --sort=name --owner=0 --group=0 --numeric-owner -czf "$1" -C "$2" .
+    elif tar --version 2>/dev/null | grep -q GNU; then
+        tar --sort=name --owner=0 --group=0 --numeric-owner -czf "$1" -C "$2" .
     else
-        shasum -a 256 "$base" > "$base.sha256"
+        tar -czf "$1" -C "$2" .
     fi
-)
+
+    # sha256sum is GNU coreutils; macOS ships shasum. Same digest either way,
+    # and the format matches so the .sha256 file is interchangeable.
+    (
+        cd "$(dirname "$1")"
+        base="$(basename "$1")"
+        if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$base" > "$base.sha256"
+        else
+            shasum -a 256 "$base" > "$base.sha256"
+        fi
+    )
+}
+
+say "packaging"
+pack "$out/retroarch-${RETROARCH_VERSION}-aarch64.tar.gz" "$stage"
+
+# Each core again, on its own.
+#
+# The same .so is in the bundle above, and that is not duplication for its own
+# sake -- the two are installed by different things at different times. The
+# bundle is what a device gets when it installs RetroArch; these are what
+# ScenicRg40xxv.Cores fetches when someone picks a core from the upload page,
+# and downloading a 40 MB bundle to add a 3 MB core would be the wrong trade
+# on a handheld's WiFi.
+#
+# The archive is flat -- just <name>_libretro.so at the root -- because the
+# installer unpacks it into a versioned directory and symlinks whatever .so it
+# finds. Nothing needs a layout.
+say "packaging cores"
+while read -r name repo; do
+    case "$name" in ''|\#*) continue ;; esac
+    coredir="$work/coretar/$name"
+    rm -rf "$coredir"
+    mkdir -p "$coredir"
+    cp "$stage/lib/libretro/${name}_libretro.so" "$coredir/"
+    pack "$out/${name}-${RETROARCH_VERSION}-aarch64.tar.gz" "$coredir"
+done < "${CORES:-$here/cores.txt}"
 
 say "done"
 ls -la "$out"
-cat "$tarball.sha256"
+for f in "$out"/*.sha256; do cat "$f"; done
