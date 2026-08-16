@@ -194,7 +194,23 @@ make -j"$JOBS"
 
 say "staging"
 "$STRIP" -o "$stage/bin/retroarch" retroarch
-cp -a media/assets/. "$stage/share/retroarch/" 2>/dev/null || true
+
+# media/assets is not in the source tarball -- it is a separate repository the
+# libretro buildbot clones -- so this copies nothing on a clean tree. Left in
+# because it costs nothing and works if assets are ever vendored, but the menu
+# this bundle ships is RGUI, which needs none of them.
+cp -a media/assets/. "$stage/share/retroarch/assets/" 2>/dev/null || true
+
+# The joypad autoconfig, without which RetroArch finds the pad and refuses to
+# use it: "[Autoconf] gpio-keys-gamepad (1/1) not configured". Its numbers are
+# button indices derived from the device's key bits, not evdev codes; the file
+# explains where each one comes from.
+mkdir -p "$stage/share/retroarch/autoconfig"
+cp "$here/autoconfig/gpio-keys-gamepad.cfg" "$stage/share/retroarch/autoconfig/"
+
+# Directory paths for this bundle, layered at launch with --appendconfig so
+# that the player's own settings stay in /root/.config and survive an upgrade.
+cp "$here/retroarch.cfg" "$stage/share/retroarch/retroarch.cfg"
 
 say "building cores"
 while read -r name repo; do
