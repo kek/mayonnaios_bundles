@@ -27,9 +27,29 @@ env:
   TOOLCHAIN_VERSION: "15.3.0"
   TOOLCHAIN_ASSET: nerves_toolchain_aarch64_nerves_linux_gnu-linux_x86_64-15.3.0-8DAF9F3.tar.xz
 
+# Read by default; the build job asks for write because it publishes.
+#
+# This repository's default workflow permission is "read", which is why every
+# tag build failed on its last step:
+#
+#     Found release RetroArch 1.22.2 (bundle 4, OK on A) (with id=371447587)
+#     HttpError: Resource not accessible by integration
+#
+# action-gh-release found the release and was refused permission to attach the
+# tarballs. The same commit passed on trunk only because that step is gated on
+# refs/tags/v and never ran there -- so the build was never the problem, and
+# the tag/branch split was the whole tell.
+#
+# Declared here rather than by flipping the repository setting, so it is
+# visible in the tree and survives the repo being recreated.
+permissions:
+  contents: read
+
 jobs:
   bundle:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
