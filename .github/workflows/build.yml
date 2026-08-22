@@ -132,16 +132,35 @@ jobs:
           test -f /tmp/verify/share/retroarch/retroarch.cfg
           ls /tmp/verify/lib/libretro/*.so
 
-          # Cores must not be read from inside the bundle. If libretro_directory
-          # ever points back at a bundle path, every separately installed core
-          # is silently lost at the next RetroArch upgrade -- which is a bug
-          # that only shows up one release later, on the device, as a core that
-          # used to be there.
-          grep -q '^libretro_directory = "/root/retroarch/cores"' \
-            /tmp/verify/share/retroarch/retroarch.cfg
+          # These five directories must not be named here at all, which is a
+          # stronger claim than naming them correctly.
+          #
+          # A value appended from this file is persisted into the player's main
+          # config -- config_append_file merges it before any setting is read
+          # -- so it outlives the bundle that set it and cannot be withdrawn by
+          # a later bundle. libretro_directory is also not validated on load,
+          # so one naming a directory that is not there yields an empty core
+          # list and a silent log. That pair is what emptied RetroArch's core
+          # list on the device: a path persisted from an earlier bundle, naming
+          # a directory no file in any repository still contained.
+          #
+          # Unset, RetroArch uses its own defaults -- ~/.config/retroarch/cores
+          # for cores, which MayonnaiOS.Cores fills with symlinks to the real
+          # .so files, and ~/.config/retroarch/{saves,states} for saves. So a
+          # separately installed core cannot be lost to an upgrade, and no two
+          # settings have to agree.
+          for setting in libretro_directory savefile_directory \
+                         savestate_directory system_directory \
+                         screenshot_directory; do
+            if grep -n "^$setting" /tmp/verify/share/retroarch/retroarch.cfg; then
+              echo "FAIL  $setting must not be set in the bundle config"
+              exit 1
+            fi
+            echo "ok       $setting unset"
+          done
 
       - name: Check each core also ships on its own
-        # The per-core tarballs are what ScenicRg40xxv.Cores installs when
+        # The per-core tarballs are what MayonnaiOS.Cores installs when
         # someone picks a core from the upload page. Flat -- just the .so at
         # the root -- because the installer symlinks whatever .so it finds.
         run: |
