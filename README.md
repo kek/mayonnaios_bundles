@@ -1,13 +1,11 @@
-# coldcuts
+# mayonnaios_apps
 
 Cross-built native apps for [MayonnaiOS](https://github.com/kek/mayonnaios) on
 the Anbernic RG40XXV, packaged as tarballs that `MayonnaiOS.Bundle` installs
 onto the device's writable partition and verifies by SHA-256.
 
-The name follows the sandwich. MayonnaiOS is the spread, its sandboxed Lua
-scriptapps are the pickles, and the substantial native binaries — an emulator,
-a streaming client — are the cold cuts. This repository was
-`retroarch-rg40xxv` until Moonlight moved in; GitHub redirects the old name.
+This repository was `retroarch-rg40xxv` until Moonlight moved in beside
+RetroArch; GitHub redirects the old name.
 
     retroarch/    RetroArch + libretro cores    retroarch/build.sh
     moonlight/    Moonlight Embedded            moonlight/build.sh
