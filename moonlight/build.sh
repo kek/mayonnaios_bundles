@@ -123,13 +123,18 @@ export PKG_CONFIG="$(command -v pkg-config) --static"
 
 say() { printf '\n=== %s\n' "$*"; }
 
+# --retry-all-errors because a connection that never opens is not a "transient
+# error" to curl's plain --retry, and freedesktop.org has already produced
+# exactly that failure once in two simultaneous CI runs.
+dl() { curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors --connect-timeout 30 "$1" -o "$2"; }
+
 fetch() {
     # fetch <url> <unpacked-dir-name>
     local url="$1" dir="$2" tarball
     tarball="$work/$(basename "$url")"
     if [ ! -d "$work/$dir" ]; then
         say "fetching $dir"
-        [ -f "$tarball" ] || curl -fsSL "$url" -o "$tarball"
+        [ -f "$tarball" ] || dl "$url" "$tarball"
         tar -xf "$tarball" -C "$work"
     fi
 }
@@ -260,9 +265,9 @@ src="$work/moonlight-embedded-$MOONLIGHT_VERSION"
 if [ ! -d "$src" ]; then
     say "fetching moonlight-embedded-$MOONLIGHT_VERSION"
     tarball="$work/moonlight-embedded-$MOONLIGHT_VERSION.tar.xz"
-    [ -f "$tarball" ] || curl -fsSL \
+    [ -f "$tarball" ] || dl \
         "https://github.com/moonlight-stream/moonlight-embedded/releases/download/v$MOONLIGHT_VERSION/moonlight-embedded-$MOONLIGHT_VERSION.tar.xz" \
-        -o "$tarball"
+        "$tarball"
     mkdir "$src"
     tar -xf "$tarball" -C "$src"
 fi
