@@ -1,8 +1,18 @@
-name: build
+name: retroarch
 
 on:
   push:
+    branches: ["**"]
+    # Path filters are not evaluated for tag pushes, so a release tag always
+    # builds even though it touches no files under retroarch/.
+    tags: ["v*", "retroarch-v*"]
+    paths:
+      - "retroarch/**"
+      - ".github/workflows/retroarch.yml"
   pull_request:
+    paths:
+      - "retroarch/**"
+      - ".github/workflows/retroarch.yml"
   workflow_dispatch:
     inputs:
       retroarch_version:
@@ -110,7 +120,7 @@ jobs:
         run: |
           SYSROOT="$HOME/sysroot" \
           CROSS="$HOME/toolchain/bin/aarch64-nerves-linux-gnu-" \
-            ./build.sh
+            ./retroarch/build.sh
 
       - name: Check the bundle is what it claims to be
         # A tarball that unpacks is not evidence. These are the three things
@@ -119,7 +129,7 @@ jobs:
         # missing autoconfig that leaves it unmapped.
         run: |
           rm -rf /tmp/verify && mkdir -p /tmp/verify
-          tar -xzf out/retroarch-*-aarch64.tar.gz -C /tmp/verify
+          tar -xzf retroarch/out/retroarch-*-aarch64.tar.gz -C /tmp/verify
 
           file /tmp/verify/bin/retroarch | tee /tmp/file.txt
           grep -q "ARM aarch64" /tmp/file.txt
@@ -167,7 +177,7 @@ jobs:
           rc=0
           while read -r name repo; do
             case "$name" in ''|\#*) continue ;; esac
-            tarball="out/${name}-"*"-aarch64.tar.gz"
+            tarball="retroarch/out/${name}-"*"-aarch64.tar.gz"
             if ! ls $tarball >/dev/null 2>&1; then
               echo "MISSING  $name tarball"; rc=1; continue
             fi
@@ -179,21 +189,25 @@ jobs:
             else
               echo "MISSING  ${name}_libretro.so at the archive root"; rc=1
             fi
-          done < cores.txt
+          done < retroarch/cores.txt
           exit $rc
 
       - uses: actions/upload-artifact@v4
         with:
           name: retroarch-bundle
           path: |
-            out/*.tar.gz
-            out/*.tar.gz.sha256
+            retroarch/out/*.tar.gz
+            retroarch/out/*.tar.gz.sha256
           if-no-files-found: error
 
       - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/v')
+        # refs/tags/ rather than refs/tags/v: this job's tags are v* for the
+        # releases that already exist and retroarch-v* now that moonlight
+        # shares the repository, and the `on.push.tags` filter is what decides
+        # which tags reach this workflow at all.
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            out/*.tar.gz
-            out/*.tar.gz.sha256
+            retroarch/out/*.tar.gz
+            retroarch/out/*.tar.gz.sha256
