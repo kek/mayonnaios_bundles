@@ -1,4 +1,4 @@
-# mayonnaios_apps
+# mayonnaios_bundles
 
 Cross-built native apps for [MayonnaiOS](https://github.com/kek/mayonnaios) on
 the Anbernic RG40XXV, packaged as tarballs that `MayonnaiOS.Bundle` installs
