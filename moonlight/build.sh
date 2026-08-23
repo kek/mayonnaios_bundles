@@ -157,6 +157,17 @@ fi
 
 say "libevdev $EVDEV_VERSION"
 if ! have lib/libevdev.a; then
+    # The tarball is vendored in vendor/ rather than fetched, because
+    # freedesktop.org has now refused two CI runs in one afternoon -- first a
+    # connect timeout that plain retries would have covered, then four solid
+    # minutes of them that no retry policy covers. It is 460 KB and a given
+    # version never changes; the source mirrors tried instead (Buildroot's,
+    # LibreELEC's, Gentoo's) were down or 404 the same afternoon. fetch()
+    # finds the copy and skips the download; the URL stays as documentation
+    # and as the fallback for a version bump, which is also the moment to
+    # replace the vendored copy.
+    [ -f "$work/libevdev-$EVDEV_VERSION.tar.xz" ] || \
+        cp "$here/vendor/libevdev-$EVDEV_VERSION.tar.xz" "$work/" 2>/dev/null || true
     fetch "https://www.freedesktop.org/software/libevdev/libevdev-$EVDEV_VERSION.tar.xz" "libevdev-$EVDEV_VERSION"
     (
         cd "$work/libevdev-$EVDEV_VERSION"

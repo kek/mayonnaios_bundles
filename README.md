@@ -98,6 +98,11 @@ inline: autodiscovery is stubbed out because Avahi needs a D-Bus the device
 does not have, and libcurl is found through pkg-config so its static
 transitive dependencies actually make it onto the link line.
 
+The libevdev tarball is vendored in `moonlight/vendor/` rather than fetched:
+freedesktop.org failed two CI runs in one afternoon, and 460 KB of tarball
+that never changes is cheaper than a flaky download. Everything else comes
+from hosts that have not earned that treatment yet.
+
 **Not yet run on hardware.** Treat these as designs until the device says
 otherwise:
 

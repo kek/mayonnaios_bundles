@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Cross-compile RetroArch for the Anbernic RG40XXV and emit a bundle that
-# ScenicRg40xxv.Bundle can install.
+# MayonnaiOS.Bundle can install.
 #
 # Output:
 #   out/retroarch-<version>-aarch64.tar.gz
@@ -258,7 +258,7 @@ pack "$out/retroarch-${RETROARCH_VERSION}-aarch64.tar.gz" "$stage"
 # The same .so is in the bundle above, and that is not duplication for its own
 # sake -- the two are installed by different things at different times. The
 # bundle is what a device gets when it installs RetroArch; these are what
-# ScenicRg40xxv.Cores fetches when someone picks a core from the upload page,
+# MayonnaiOS.Cores fetches when someone picks a core from the upload page,
 # and downloading a 40 MB bundle to add a 3 MB core would be the wrong trade
 # on a handheld's WiFi.
 #
