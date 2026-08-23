@@ -1,0 +1,151 @@
+name: moonlight
+
+on:
+  push:
+    branches: ["**"]
+    # Path filters are not evaluated for tag pushes, so a release tag always
+    # builds even though it touches no files under moonlight/.
+    tags: ["moonlight-v*"]
+    paths:
+      - "moonlight/**"
+      - ".github/workflows/moonlight.yml"
+  pull_request:
+    paths:
+      - "moonlight/**"
+      - ".github/workflows/moonlight.yml"
+  workflow_dispatch:
+    inputs:
+      moonlight_version:
+        description: Moonlight Embedded version to build
+        default: "2.7.1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MOONLIGHT_VERSION: "2.7.1"
+  # The system whose sysroot this links against -- same pinning story as the
+  # RetroArch workflow: the openssl, alsa, expat, uuid, zlib and udev this
+  # binary runs against must be the exact ones in the device rootfs, or the
+  # failure surfaces on hardware.
+  SYSTEM_REPO: kek/nerves_system_rg40xxv
+  SYSTEM_TAG: v0.2.0
+  SYSTEM_ARTIFACT: nerves_system_rg40xxv-portable-0.1.0-A58E483.tar.gz
+  TOOLCHAIN_VERSION: "15.3.0"
+  TOOLCHAIN_ASSET: nerves_toolchain_aarch64_nerves_linux_gnu-linux_x86_64-15.3.0-8DAF9F3.tar.xz
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git curl pkg-config xz-utils cmake
+
+      - name: Cache the toolchain and sysroot
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/toolchain
+            ~/sysroot
+          key: ${{ env.TOOLCHAIN_ASSET }}-${{ env.SYSTEM_ARTIFACT }}
+
+      - name: Fetch the Nerves toolchain
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/toolchain
+          curl -fsSL -o /tmp/toolchain.tar.xz \
+            "https://github.com/nerves-project/toolchains/releases/download/v${TOOLCHAIN_VERSION}/${TOOLCHAIN_ASSET}"
+          tar -xJf /tmp/toolchain.tar.xz -C ~/toolchain --strip-components=1
+
+      - name: Fetch the system sysroot
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/sysroot /tmp/system
+          curl -fsSL -o /tmp/system.tar.gz \
+            "https://github.com/${SYSTEM_REPO}/releases/download/${SYSTEM_TAG}/${SYSTEM_ARTIFACT}"
+          tar -xzf /tmp/system.tar.gz -C /tmp/system
+          mv /tmp/system/*/staging/* ~/sysroot/
+          rm -rf /tmp/system /tmp/system.tar.gz
+
+      - name: Check the sysroot has what Moonlight links
+        # Everything else Moonlight needs -- opus, evdev, curl, ffmpeg, SDL --
+        # is built statically by build.sh, so this list is the sysroot's whole
+        # contribution. Fail here with a name rather than an hour later with a
+        # configure probe's guess.
+        run: |
+          rc=0
+          for pc in openssl expat uuid zlib alsa libudev libdrm gbm egl glesv2; do
+            if [ -f ~/sysroot/usr/lib/pkgconfig/$pc.pc ] || \
+               [ -f ~/sysroot/usr/share/pkgconfig/$pc.pc ]; then
+              echo "ok       $pc"
+            else
+              echo "MISSING  $pc"
+              rc=1
+            fi
+          done
+          exit $rc
+
+      - name: Build the bundle
+        env:
+          MOONLIGHT_VERSION: ${{ inputs.moonlight_version || '2.7.1' }}
+        run: |
+          SYSROOT="$HOME/sysroot" \
+          CROSS="$HOME/toolchain/bin/aarch64-nerves-linux-gnu-" \
+            ./moonlight/build.sh
+
+      - name: Check the bundle is what it claims to be
+        # Three claims worth checking: the architecture is the device's, the
+        # static linking actually happened (a NEEDED entry for libcurl or
+        # libSDL2 means a library the device does not have leaked through as
+        # dynamic), and the rpath lets bin/moonlight find its own libraries
+        # after the installer moves the bundle.
+        run: |
+          rm -rf /tmp/verify && mkdir -p /tmp/verify
+          tar -xzf moonlight/out/moonlight-*-aarch64.tar.gz -C /tmp/verify
+
+          file /tmp/verify/bin/moonlight | tee /tmp/file.txt
+          grep -q "ARM aarch64" /tmp/file.txt
+
+          readelf -d /tmp/verify/bin/moonlight | tee /tmp/dyn.txt
+          grep -q 'ORIGIN/../lib' /tmp/dyn.txt
+
+          readelf -d /tmp/verify/lib/libgamestream.so.* >> /tmp/dyn.txt
+          for lib in curl SDL2 opus evdev avcodec avutil; do
+            if grep "NEEDED" /tmp/dyn.txt | grep -q "lib$lib"; then
+              echo "FAIL  lib$lib must be linked statically, the device does not ship it"
+              exit 1
+            fi
+            echo "ok       lib$lib not NEEDED"
+          done
+
+          test -f /tmp/verify/lib/libgamestream.so.4
+          test -f /tmp/verify/lib/libmoonlight-common.so.4
+          test -f /tmp/verify/share/moonlight/gamecontrollerdb.txt
+          test -f /tmp/verify/share/moonlight/moonlight.conf
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moonlight-bundle
+          path: |
+            moonlight/out/*.tar.gz
+            moonlight/out/*.tar.gz.sha256
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            moonlight/out/*.tar.gz
+            moonlight/out/*.tar.gz.sha256

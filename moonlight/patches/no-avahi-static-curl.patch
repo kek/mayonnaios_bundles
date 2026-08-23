@@ -1,0 +1,161 @@
+diff --git a/libgamestream/CMakeLists.txt b/libgamestream/CMakeLists.txt
+index d8dd04e..52ad716 100644
+--- a/libgamestream/CMakeLists.txt
++++ b/libgamestream/CMakeLists.txt
+@@ -2,12 +2,15 @@ set(SO_VERSION 4)
+ 
+ find_package(LibUUID REQUIRED)
+ find_package(Threads REQUIRED)
+-find_package(CURL REQUIRED)
++# CURL through pkg-config rather than FindCURL: this build links a static
++# libcurl, and its .pc file (queried with --static) is the one place that
++# knows the transitive -lssl -lcrypto -lz the archive needs. FindCURL would
++# hand back the bare .a and leave gamestream.so with undefined symbols that
++# only surface when the executable loads on the device.
++pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
+ find_package(OpenSSL 1.1.0 REQUIRED)
+ find_package(EXPAT REQUIRED)
+ 
+-pkg_check_modules(AVAHI REQUIRED avahi-client)
+-
+ aux_source_directory(./ GAMESTREAM_SRC_LIST)
+ aux_source_directory(../third_party/h264bitstream GAMESTREAM_SRC_LIST)
+ 
+@@ -23,9 +26,9 @@ target_link_libraries(gamestream moonlight-common)
+ set_target_properties(gamestream PROPERTIES SOVERSION ${SO_VERSION} VERSION ${PROJECT_VERSION})
+ set_target_properties(moonlight-common PROPERTIES SOVERSION ${SO_VERSION} VERSION ${PROJECT_VERSION})
+ 
+-target_include_directories(gamestream PRIVATE ../third_party/moonlight-common-c/src ../third_party/h264bitstream ${AVAHI_INCLUDE_DIRS} ${LibUUID_INCLUDE_DIRS})
++target_include_directories(gamestream PRIVATE ../third_party/moonlight-common-c/src ../third_party/h264bitstream ${LibUUID_INCLUDE_DIRS})
+ target_include_directories(moonlight-common PRIVATE ../third_party/moonlight-common-c/reedsolomon ../third_party/moonlight-common-c/enet/include)
+-target_link_libraries(gamestream ${CURL_LIBRARIES} ${OPENSSL_LIBRARIES} ${EXPAT_LIBRARIES} ${AVAHI_LIBRARIES} ${LibUUID_LIBRARIES})
++target_link_libraries(gamestream PkgConfig::CURL ${OPENSSL_LIBRARIES} ${EXPAT_LIBRARIES} ${LibUUID_LIBRARIES})
+ 
+ target_link_libraries(gamestream ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
+ 
+diff --git a/libgamestream/discover.c b/libgamestream/discover.c
+index 28cc052..0678a71 100644
+--- a/libgamestream/discover.c
++++ b/libgamestream/discover.c
+@@ -1,7 +1,7 @@
+ /*
+  * This file is part of Moonlight Embedded.
+  *
+- * Based on Avahi example client-browse-services
++ * Copyright (C) 2015 Iwan Timmer
+  *
+  * Moonlight is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -17,102 +17,16 @@
+  * along with Moonlight; if not, see <http://www.gnu.org/licenses/>.
+  */
+ 
+-#include "errors.h"
+-
+-#include <avahi-client/client.h>
+-#include <avahi-client/lookup.h>
+-
+-#include <avahi-common/simple-watch.h>
+-#include <avahi-common/malloc.h>
+-#include <avahi-common/error.h>
+-
+-#include <stdio.h>
+-#include <stdlib.h>
+-#include <stdbool.h>
+-#include <time.h>
+-
+-static AvahiSimplePoll *simple_poll = NULL;
+-
+-struct cb_ctx {
+-  char* address;
+-  unsigned short* port;
+-};
+-
+-static void client_callback(AvahiClient *c, AvahiClientState state, void *userdata) {
+-  if (state == AVAHI_CLIENT_FAILURE) {
+-    gs_error = "Server connection failure";
+-    avahi_simple_poll_quit(simple_poll);
+-  }
+-}
+-
+-static void resolve_callback(AvahiServiceResolver *r, AvahiIfIndex interface, AvahiProtocol protocol, AvahiResolverEvent event, const char *name, const char *type, const char *domain, const char *host_name, const AvahiAddress *address, uint16_t port, AvahiStringList *txt, AvahiLookupResultFlags flags, void *userdata) {
+-  if (event == AVAHI_RESOLVER_FOUND) {
+-    if (userdata != NULL) {
+-      struct cb_ctx* ctx = userdata;
+-      avahi_address_snprint(ctx->address, AVAHI_ADDRESS_STR_MAX, address);
+-      *ctx->port = port;
+-      avahi_simple_poll_quit(simple_poll);
+-    } else {
+-      char strAddress[AVAHI_ADDRESS_STR_MAX];
+-      avahi_address_snprint(strAddress, sizeof(strAddress), address);
+-      printf(" %s (%s:%u)\n", host_name, strAddress, port);
+-    }
+-  }
+-
+-  avahi_service_resolver_free(r);
+-}
+-
+-static void browse_callback(AvahiServiceBrowser *b, AvahiIfIndex interface, AvahiProtocol protocol, AvahiBrowserEvent event, const char *name, const char *type, const char *domain, AvahiLookupResultFlags flags, void* userdata) {
+-  AvahiClient *c = avahi_service_browser_get_client(b);
+-
+-  switch (event) {
+-  case AVAHI_BROWSER_FAILURE:
+-    gs_error = "Server browser failure";
+-    avahi_simple_poll_quit(simple_poll);
+-    break;
+-  case AVAHI_BROWSER_NEW:
+-    if (!(avahi_service_resolver_new(c, interface, protocol, name, type, domain, AVAHI_PROTO_INET, 0, resolve_callback, userdata)))
+-      gs_error = "Failed to resolve service";
+-
+-    break;
+-  case AVAHI_BROWSER_REMOVE:
+-    break;
+-  }
+-}
++#include "discover.h"
+ 
++/*
++ * Autodiscovery is Avahi, and this build carries none: the target has no
++ * D-Bus and no avahi-daemon, so the client library would have nothing to
++ * talk to even if it were linked. Leaving dest untouched is the "not found"
++ * answer -- main.c checks dest[0] and asks for an IP address, which on this
++ * device is supplied by the launcher configuration anyway.
++ */
+ void gs_discover_server(char* dest, unsigned short* port) {
+-  AvahiClient *client = NULL;
+-  AvahiServiceBrowser *sb = NULL;
+-
+-  if (!(simple_poll = avahi_simple_poll_new())) {
+-    gs_error = "Failed to create simple poll object";
+-    goto cleanup;
+-  }
+-
+-  int error;
+-  client = avahi_client_new(avahi_simple_poll_get(simple_poll), 0, client_callback, NULL, &error);
+-  if (!client) {
+-    gs_error = "Failed to create client";
+-    goto cleanup;
+-  }
+-
+-  struct cb_ctx ctx;
+-  ctx.address = dest;
+-  ctx.port = port;
+-  if (!(sb = avahi_service_browser_new(client, AVAHI_IF_UNSPEC, AVAHI_PROTO_INET, "_nvstream._tcp", NULL, 0, browse_callback, &ctx))) {
+-    gs_error = "Failed to create service browser";
+-    goto cleanup;
+-  }
+-
+-  avahi_simple_poll_loop(simple_poll);
+-
+-  cleanup:
+-  if (sb)
+-    avahi_service_browser_free(sb);
+-
+-  if (client)
+-    avahi_client_free(client);
+-
+-  if (simple_poll)
+-    avahi_simple_poll_free(simple_poll);
++  (void) dest;
++  (void) port;
+ }
