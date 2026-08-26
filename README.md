@@ -4,9 +4,6 @@ Cross-built native apps for [MayonnaiOS](https://github.com/kek/mayonnaios) on
 the Anbernic RG40XXV, packaged as tarballs that `MayonnaiOS.Bundle` installs
 onto the device's writable partition and verifies by SHA-256.
 
-This repository was `retroarch-rg40xxv` until Moonlight moved in beside
-RetroArch; GitHub redirects the old name.
-
     retroarch/    RetroArch + libretro cores    retroarch/build.sh
     moonlight/    Moonlight Embedded            moonlight/build.sh
 

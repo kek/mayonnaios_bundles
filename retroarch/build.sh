@@ -90,12 +90,11 @@ export OS="${OS:-Linux}"
 #     LDFLAGS=-L/opt/homebrew/opt/postgresql@16/lib
 #     CPPFLAGS=-I/opt/homebrew/opt/postgresql@16/include
 #
-# from a Homebrew postgres setup, and an earlier version of this script
-# inherited them -- the first successful build linked its core with a host
-# library path on the command line. Nothing resolved from there so nothing
-# broke, which is the bad kind of harmless: a host -I or -L that does match
-# something produces an aarch64 binary with x86 headers' assumptions baked in,
-# and the failure surfaces on the device.
+# from a Homebrew postgres setup, and inheriting them puts a host library
+# path on the cross compiler's command line. When nothing resolves from there
+# nothing breaks, which is the bad kind of harmless: a host -I or -L that does
+# match something produces an aarch64 binary with x86 headers' assumptions
+# baked in, and the failure surfaces on the device.
 export CFLAGS="--sysroot=$SYSROOT -O2"
 export CXXFLAGS="--sysroot=$SYSROOT -O2"
 export LDFLAGS="--sysroot=$SYSROOT"
