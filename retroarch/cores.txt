@@ -30,3 +30,11 @@ gambatte https://github.com/libretro/gambatte-libretro.git
 # CMake target -- so build.sh's core loop falls back to CMake when the
 # makefile is missing. The flags live there, with the reasoning.
 mgba https://github.com/libretro/mgba.git
+
+# NES. Its unix branch assigns CC only under SunOS, so on this builder the
+# exported cross compiler is what runs -- but that guard tests the *build*
+# machine's uname, not the target, which is worth remembering if the build
+# ever moves somewhere exotic. Its platform test is an exact `ifeq
+# ($(platform), unix)` rather than a findstring, so the bare `platform=unix`
+# the core loop passes is what it wants.
+fceumm https://github.com/libretro/libretro-fceumm.git
