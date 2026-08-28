@@ -217,8 +217,33 @@ while read -r name repo; do
     say "core: $name"
     coredir="$work/cores/$name"
     [ -d "$coredir" ] || git clone --depth 1 "$repo" "$coredir"
-    make -C "$coredir" -f Makefile.libretro -j"$JOBS" platform=unix
-    "$STRIP" -o "$stage/lib/libretro/${name}_libretro.so" "$coredir/${name}_libretro.so"
+    if [ -f "$coredir/Makefile.libretro" ]; then
+        make -C "$coredir" -f Makefile.libretro -j"$JOBS" platform=unix
+        built="$coredir/${name}_libretro.so"
+    else
+        # A core without a Makefile.libretro is mGBA, whose libretro core is
+        # a CMake target. CMAKE_SYSTEM_NAME puts CMake in cross mode, which
+        # stops it probing the build machine for libraries and, on a macOS
+        # builder, keeps the suffix .so instead of .dylib. The compiler and
+        # sysroot need no flags of their own: CMake reads CC, CFLAGS and
+        # LDFLAGS from the environment this script already exports.
+        # CMAKE_SYSTEM_PROCESSOR is set because mGBA's CMakeLists branches on
+        # it to pick console-specific VFS backends.
+        #
+        # LIBMGBA_ONLY and BUILD_LIBRETRO are mGBA's own switches: the first
+        # skips every optional dependency probe (Qt, SDL, ffmpeg, libpng,
+        # zlib), leaving a core that needs nothing but libc; the second is
+        # the target itself. If a second CMake core ever lands here, the
+        # per-core flags need a home in cores.txt rather than this branch.
+        cmake -S "$coredir" -B "$coredir/build-libretro" \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DLIBMGBA_ONLY=ON \
+            -DBUILD_LIBRETRO=ON
+        cmake --build "$coredir/build-libretro" -j "$JOBS"
+        built="$coredir/build-libretro/${name}_libretro.so"
+    fi
+    "$STRIP" -o "$stage/lib/libretro/${name}_libretro.so" "$built"
 done < "${CORES:-$here/cores.txt}"
 
 # GNU tar if there is one, because --sort and --numeric-owner make the archive

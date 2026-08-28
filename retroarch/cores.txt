@@ -19,3 +19,14 @@
 # any other core: several platform branches in that same Makefile *do* assign
 # CC outright, and one of those would silently ignore the cross compiler.
 snes9x2010 https://github.com/libretro/snes9x2010.git
+
+# Game Boy and Game Boy Color. The unix branch of its Makefile.libretro sets
+# TARGET to gambatte_libretro.so and, like snes9x2010's, assigns no CC or CXX,
+# so the exported cross compilers are the ones that build it. This core is
+# C++, which is why build.sh exports CXX and not just CC.
+gambatte https://github.com/libretro/gambatte-libretro.git
+
+# Game Boy Advance. mGBA has no Makefile.libretro -- its libretro core is a
+# CMake target -- so build.sh's core loop falls back to CMake when the
+# makefile is missing. The flags live there, with the reasoning.
+mgba https://github.com/libretro/mgba.git
